@@ -1,0 +1,104 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build NVXK Benchmark",
+            "type": "process",
+            "command": "C:\\msys64\\ucrt64\\bin\\g++.exe",
+            "args": [
+                "-I.",
+                "-O3",
+                "-fopenmp",
+                "-Wall",
+                "main.cpp",
+                "nvxk.cpp",
+                "-o",
+                "nvxk.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\ucrt64\\bin;C:\\msys64\\usr\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": "$gcc",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "Run NVXK Benchmark",
+            "type": "process",
+            "command": "${workspaceFolder}\\nvxk.exe",
+            "dependsOn": "Build NVXK Benchmark",
+            "dependsOrder": "sequence",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\ucrt64\\bin;C:\\msys64\\usr\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build NVXK Example",
+            "type": "process",
+            "command": "C:\\msys64\\ucrt64\\bin\\g++.exe",
+            "args": [
+                "-I.",
+                "-O3",
+                "-fopenmp",
+                "-Wall",
+                "my_app.cpp",
+                "nvxk.cpp",
+                "-o",
+                "my_app.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\ucrt64\\bin;C:\\msys64\\usr\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Run NVXK Example",
+            "type": "process",
+            "command": "${workspaceFolder}\\my_app.exe",
+            "dependsOn": "Build NVXK Example",
+            "dependsOrder": "sequence",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\ucrt64\\bin;C:\\msys64\\usr\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build NVXK Portable",
+            "type": "process",
+            "command": "C:\\msys64\\ucrt64\\bin\\g++.exe",
+            "args": [
+                "-I.",
+                "-O3",
+                "-fopenmp",
+                "-Wall",
+                "-static",
+                "main.cpp",
+                "nvxk.cpp",
+                "-o",
+                "nvxk-portable.exe"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "C:\\msys64\\ucrt64\\bin;C:\\msys64\\usr\\bin;${env:PATH}"
+                }
+            },
+            "problemMatcher": "$gcc"
+        }
+    ]
+}

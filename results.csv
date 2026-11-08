@@ -1,0 +1,4 @@
+size,algorithm,threads,median_seconds,gflops
+512,omp,1,0.0111380875,24.1007
+512,omp,2,0.0071793,37.3902
+512,omp,4,0.00436480625,61.5
