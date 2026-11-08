@@ -1,6 +1,6 @@
 # NVXK
 
-NVXK là dự án C++ thử nghiệm và so sánh các cách cộng vector, nhân ma trận vuông trên CPU. Dự án tập trung vào thay đổi thứ tự truy cập bộ nhớ, SIMD AVX2/FMA, chia khối và chạy đa luồng bằng OpenMP.
+NVXK là dự án C++ thử nghiệm và so sánh các cách cộng vector, nhân ma trận trên CPU. Dự án tập trung vào thay đổi thứ tự truy cập bộ nhớ, SIMD AVX2/FMA, chia khối và chạy đa luồng bằng OpenMP.
 
 Tên tiền tố `XK` trong các hàm nhân ma trận được dùng để ghi nhận người đóng góp quan trọng của dự án.
 
@@ -22,13 +22,37 @@ Kết quả phụ thuộc vào CPU, compiler, cờ biên dịch và tải của 
 | `main.cpp` | CLI benchmark: đọc tuỳ chọn, tạo ma trận thử, kiểm tra kết quả, đo thời gian, in GFLOPS và tuỳ chọn xuất CSV. |
 | `nvxk.cpp` | Phần cài đặt các hàm cộng vector và nhân ma trận. |
 | `nvxk.h` | Khai báo công khai các hàm để benchmark hoặc chương trình C++ khác gọi. |
-| `my_app.cpp` | Ứng dụng console cho nhập hai ma trận vuông, nhân chúng bằng `XK_auto` và in kết quả. |
+| `my_app.cpp` | Ứng dụng console nhập `M`, `K`, `N`, nhân A[M×K] với B[K×N] bằng `XK_gemm` rồi in kết quả. |
 | `makefile` | Các mục tiêu build benchmark, ví dụ và dọn các executable do Makefile tạo. |
 | `nvxk-portable.exe` | Executable benchmark build tĩnh nếu tệp này được phân phối kèm bản phát hành. |
 
 ## Các hàm
 
-Các hàm nhân ma trận nhận hai ma trận vuông đầu vào `A` và `B`, ghi tích `A × B` vào `C`, với mỗi ma trận có kích thước `N × N`.
+Các hàm `XK_*` cũ nhận ma trận vuông `N × N`. API `XK_gemm*` mới hỗ trợ phép nhân chữ nhật `A[M × K] × B[K × N] = C[M × N]`.
+
+### GEMM chữ nhật và kiểu dữ liệu
+
+`XK_gemm_naive` và `XK_gemm_ikj` là template, hỗ trợ `float`, `double` và số nguyên có dấu không lớn hơn `int`. `XK_gemm` tự chọn AVX2/FMA cho `float` và `double`, fallback về scalar nếu CPU không hỗ trợ; số nguyên dùng template scalar có kiểm tra tràn. Các ma trận lưu dạng row-major; `A` cần `M*K`, `B` cần `K*N`, và `C` cần `M*N` phần tử. Khi cần nhân nhanh số nguyên 32-bit, `XK_gemm_i32_i64` nhận hai đầu vào `int32_t` và ghi kết quả `int64_t`, không kiểm tra tràn bên trong vòng lặp. Người gọi phải bảo đảm từng tổng kết quả nằm trong miền `int64_t`. Các biến thể chia khối và OpenMP hiện dành cho `float`.
+
+```cpp
+float A[] = {1, 2, 3, 4, 5, 6};
+float B[] = {7, 8, 9, 10, 11, 12};
+float C[4];
+XK_gemm(A, B, C, 2, 3, 2);
+```
+
+Kết quả là `{58, 64, 139, 154}`. Các API vuông cũ vẫn được giữ để tương thích với chương trình hiện tại.
+
+Ví dụ số nguyên, đầu ra rộng hơn đầu vào:
+
+```cpp
+int32_t A[] = {50000, 50000};
+int32_t B[] = {50000, -50000};
+int64_t C[1];
+XK_gemm_i32_i64(A, B, C, 1, 2, 1);
+```
+
+Kết quả là `0`. Mỗi tích được mở rộng sang `int64_t` trước khi nhân. Hàm không kiểm tra tổng bị tràn, vì vậy mọi tổng trung gian theo thứ tự tích lũy cũng như kết quả cuối phải biểu diễn được bằng `int64_t`.
 
 ### `vector_add_avx2`
 
@@ -36,7 +60,7 @@ Các hàm nhân ma trận nhận hai ma trận vuông đầu vào `A` và `B`, g
 void vector_add_avx2(const float* a, const float* b, float* c, size_t n);
 ```
 
-Cộng hai mảng `a` và `b`, mỗi mảng có `n` phần tử, rồi ghi kết quả vào `c`. AVX2 xử lý từng nhóm tối đa 8 số `float`; các phần tử cuối không đủ thành nhóm 8 được xử lý tuần tự. Hàm này hiện có trong thư viện nhưng chưa được benchmark trong `main.cpp`.
+Cộng hai mảng `a` và `b`, mỗi mảng có `n` phần tử, rồi ghi kết quả vào `c`. Có overload `float` (8 phần tử mỗi vector) và `double` (4 phần tử mỗi vector); phần dư được xử lý tuần tự. Bài test bao gồm kích thước có phần dư và benchmark riêng chạy bằng `--algorithm vector-add`.
 
 ### `XK_naive`
 
@@ -83,7 +107,7 @@ void XK_avx2_omp(
 );
 ```
 
-Phiên bản đa luồng chia các hàng của `C` bằng OpenMP. Nếu CPU hỗ trợ AVX2/FMA, mỗi luồng dùng AVX2/FMA; nếu không, chương trình dùng bản i-k-j đa luồng tương thích. `thread_count` nhỏ hơn 1 được đổi thành 1. Benchmark mặc định thử 1, 2 và 4 luồng; có thể chỉ định các giá trị khác bằng CLI.
+Phiên bản đa luồng chia các hàng của `C` bằng OpenMP. Nếu CPU hỗ trợ AVX2/FMA, mỗi luồng dùng AVX2/FMA; nếu không, chương trình dùng bản i-k-j đa luồng tương thích. `thread_count` nhỏ hơn 1 được đổi thành 1. Với ma trận vuông `N < 256`, hàm chạy đơn luồng để tránh overhead; benchmark mặc định thử 1, 2 và 4 luồng, có thể chỉ định các giá trị khác bằng CLI.
 
 ### `XK_omp`
 
@@ -91,7 +115,7 @@ Phiên bản đa luồng chia các hàng của `C` bằng OpenMP. Nếu CPU hỗ
 void XK_omp(const float* A, const float* B, float* C, size_t N, int thread_count);
 ```
 
-Tên gọi tiện dụng cho backend đa luồng có tự chọn AVX2/FMA hoặc fallback scalar/OpenMP.
+Tên gọi tiện dụng cho backend đa luồng có tự chọn AVX2/FMA hoặc fallback scalar/OpenMP. API chữ nhật `XK_gemm_omp` cũng dùng OpenMP; với công việc nhỏ hơn xấp xỉ `M*K*N = 256^3`, hàm chuyển sang AVX2 đơn luồng.
 
 Nhiều luồng không luôn nhanh hơn: ma trận nhỏ có thể bị ảnh hưởng bởi chi phí điều phối luồng; số luồng hữu ích cũng phụ thuộc vào CPU.
 
@@ -99,9 +123,10 @@ Nhiều luồng không luôn nhanh hơn: ma trận nhỏ có thể bị ảnh h�
 
 ```cpp
 void XK_blocked(const float* A, const float* B, float* C, size_t N);
+void XK_blocked(const float* A, const float* B, float* C, size_t N, size_t block_size);
 ```
 
-Phiên bản chia các vòng lặp ma trận thành khối với `BLOCK = 64`, sau đó dùng AVX2/FMA trong khối nếu CPU hỗ trợ. Nếu không hỗ trợ, hàm tự dùng `XK_ikj`. Các phần tử ở cạnh ma trận được xử lý bằng vòng lặp dư. Block size hiện đang cố định trong mã nguồn và chưa chắc là tối ưu cho mọi CPU.
+Phiên bản chia các vòng lặp ma trận thành khối, sau đó dùng AVX2/FMA trong khối nếu CPU hỗ trợ. Overload cũ mặc định dùng block size 64; overload mới nhận block size dương tùy chọn. `XK_gemm_blocked` cung cấp cùng phép tính cho ma trận chữ nhật. Các phần tử ở cạnh ma trận được xử lý an toàn; block size phù hợp vẫn phụ thuộc CPU.
 
 ## Biểu diễn ma trận và điều kiện gọi hàm
 
@@ -114,7 +139,7 @@ Ma trận được lưu dạng row-major: các phần tử của một hàng n�
 
 được lưu dưới dạng `{1, 2, 3, 4}`.
 
-Với ma trận kích thước `N × N`, `A`, `B` và `C` cần vùng nhớ chứa ít nhất `N * N` phần tử `float`. `C` là vùng nhận kết quả.
+Với API vuông, `A`, `B` và `C` cần vùng nhớ chứa ít nhất `N * N` phần tử `float`. Với API chữ nhật, kích thước vùng nhớ lần lượt là `M*K`, `K*N` và `M*N`. `C` là vùng nhận kết quả.
 
 Các hàm công khai tự kiểm tra AVX2/FMA trước khi gọi mã SIMD. Nếu CPU không hỗ trợ, những hàm này chạy fallback tương thích. Chương trình vẫn có thể chạy trên CPU không hỗ trợ AVX2/FMA; hiệu năng khi đó có thể thấp hơn.
 
@@ -159,7 +184,20 @@ Build ứng dụng nhập ma trận:
 if ($LASTEXITCODE -eq 0) { .\my_app.exe }
 ```
 
-Chạy ứng dụng, nhập kích thước `N`, sau đó nhập lần lượt từng hàng của ma trận A và B. Ví dụ với `N = 2`, nhập các hàng `1 2`, `3 4` cho A và `5 6`, `7 8` cho B; kết quả là `19 22` và `43 50`. Ứng dụng hiện nhận ma trận vuông.
+Chạy ứng dụng, nhập lần lượt `M`, `K`, `N`, sau đó nhập `M` hàng của A (mỗi hàng `K` số) và `K` hàng của B (mỗi hàng `N` số). Ví dụ nhập:
+
+```text
+2
+3
+2
+1 2 3
+4 5 6
+7 8
+9 10
+11 12
+```
+
+Kết quả là `58 64` và `139 154`.
 
 Để tạo một bản ứng dụng liên kết tĩnh nhằm gửi cho máy Windows khác:
 
@@ -182,8 +220,11 @@ Các mục tiêu:
 ```powershell
 make nvxk.exe
 make my_app.exe
+make test
 make clean
 ```
+
+`make test` chạy bài kiểm tra GEMM chữ nhật, biên AVX2, cộng vector `double` và đầu ra số nguyên `int64_t`.
 
 Makefile hiện dùng `CXX = g++`; hãy đảm bảo lệnh `g++` trỏ tới compiler MSYS2 UCRT64 phù hợp. Nếu máy đang chọn một MinGW cũ khác, dùng các lệnh build trực tiếp ở trên hoặc chỉnh `PATH` trước khi gọi `make`.
 
@@ -207,11 +248,22 @@ Tuỳ chọn hỗ trợ:
 |---|---|---|
 | `--size N` | Chạy một kích thước ma trận. | — |
 | `--sizes N,N,...` | Chạy nhiều kích thước, phân cách bằng dấu phẩy. | `64,67,128,130,256,512,1024` |
+| `--shape M,K,N` | Chạy một phép nhân chữ nhật `A[M×K] * B[K×N]`. Không dùng cùng `--size/--sizes`. | — |
 | `--runs N` | Số mẫu thời gian; phải là số nguyên dương. | `5` |
 | `--threads N,N,...` | Số luồng thử cho thuật toán `omp`; mỗi số phải dương. | `1,2,4` |
-| `--algorithm NAME` | Chọn `all`, `naive`, `ikj`, `avx2`, `blocked`, `omp` hoặc `auto`. | `all` |
+| `--tune-block-size` | Tự sinh block-size ứng viên; mỗi ứng viên được warm-up rồi benchmark cho thuật toán `blocked`. Chỉ dùng với `all` hoặc `blocked`. | Tắt |
+| `--block-sizes N,...` | Tùy chọn thay danh sách block-size tự sinh; tự bật tuning. | Lũy thừa của 2 từ 8 đến 256, giới hạn theo kích thước lớn nhất; với kích thước nhỏ hơn 8 thử đúng kích thước lớn nhất |
+| `--algorithm NAME` | Chọn `all`, `naive`, `ikj`, `avx2`, `blocked`, `omp`, `auto` hoặc `vector-add`. | `all` |
 | `--csv FILE` | Ghi kết quả dạng CSV vào tệp chỉ định. | Không ghi CSV |
 | `--help` | In hướng dẫn lệnh. | — |
+
+Benchmark riêng cộng vector trên cả `float` và `double`; `--size`/`--sizes` là số phần tử mỗi vector:
+
+```powershell
+.\nvxk.exe --size 1000000 --algorithm vector-add --runs 5 --csv vector-results.csv
+```
+
+Kết quả được kiểm tra với phép cộng scalar tương ứng trước khi báo thời gian trung vị và băng thông GB/s. Băng thông ước tính tính ba lần truy cập dữ liệu trên mỗi phần tử (hai lần đọc, một lần ghi). Benchmark vector dùng CSV `operation,type,size,median_seconds,gigabytes_per_second`; CSV GEMM giữ schema riêng.
 
 Ví dụ: chạy kích thước 512 với OpenMP 1, 2 và 4 luồng, dùng 5 mẫu và xuất CSV:
 
@@ -225,23 +277,35 @@ Chạy các thuật toán đơn luồng tại vài kích thước:
 .\nvxk.exe --sizes 128,256,512,1024 --algorithm all --runs 5 --csv results.csv
 ```
 
+Tự benchmark các block-size, in cấu hình nhanh nhất theo từng kích thước:
+
+```powershell
+.\nvxk.exe --sizes 256,512,1024 --algorithm blocked --tune-block-size --block-sizes 32,64,128,256
+```
+
+Benchmark ma trận chữ nhật:
+
+```powershell
+.\nvxk.exe --shape 128,256,64 --algorithm all --runs 3
+```
+
 Khi `--algorithm all`, chương trình chạy tất cả thuật toán; tuỳ chọn `--threads` áp dụng cho `omp`. Các thuật toán còn lại được báo với cột số luồng bằng 1.
 
 ## Kết quả benchmark
 
 Benchmark thực hiện một lượt làm nóng, sau đó đo nhiều mẫu. Nếu một mẫu ngắn hơn khoảng 0.05 giây, hàm được lặp nhiều lần trong mẫu đó để tăng độ phân giải của phép đo. Thời gian mỗi lần gọi được tính từ tổng thời gian chia cho số lần lặp; kết quả báo cáo là trung vị các mẫu.
 
-Chương trình kiểm tra từng đầu ra so với `XK_naive`, với sai số tuyệt đối tối đa `0.01`. Nếu kết quả có NaN/vô cực hoặc vượt sai số, chương trình báo `[FAILED]` và thoát với mã lỗi.
+Chương trình kiểm tra từng đầu ra so với GEMM naive bằng sai số hỗn hợp: sai số tuyệt đối tối đa `1e-5 + 1e-4 * max(|reference|, |result|)`. Cách này áp dụng sai số tương đối cho giá trị lớn mà vẫn có ngưỡng tuyệt đối hữu ích gần 0. Nếu kết quả có NaN/vô cực hoặc vượt ngưỡng, chương trình báo `[FAILED]` và thoát với mã lỗi.
 
 Các cột kết quả:
 
 - `Seconds`: thời gian trung vị cho một lần gọi hàm, tính bằng giây.
-- `GFLOPS`: số tỷ phép tính dấu phẩy động ước lượng mỗi giây. Benchmark dùng công thức `2 * N^3` phép tính cho phép nhân hai ma trận vuông.
+- `GFLOPS`: số tỷ phép tính dấu phẩy động ước lượng mỗi giây. Công thức là `2 * M * K * N`; cột kích thước hiển thị `M x K x N`.
 
 CSV có các cột:
 
 ```text
-size,algorithm,threads,median_seconds,gflops
+M,K,N,algorithm,threads,median_seconds,gflops
 ```
 
 Số GFLOPS cao hơn thường nghĩa là nhiều phép tính được thực hiện mỗi giây trong lần đo đó. Hãy so sánh cùng kích thước trên cùng máy. `XK_naive` có thứ tự vòng lặp khác với `XK_ikj` và các bản AVX2, nên chênh lệch giữa chúng phản ánh cả thứ tự truy cập dữ liệu lẫn cách triển khai; không nên quy toàn bộ khác biệt cho SIMD. Đầu ra cho biết AVX2/FMA có sẵn hay không. Khi không có, nhãn `avx2-fallback`, `blocked-fallback` hoặc `omp-ikj` cho biết kết quả được đo từ fallback tương thích.
@@ -293,11 +357,13 @@ Executable tự chọn AVX2/FMA hoặc fallback khi chạy, nên không bắt bu
 
 ## Giới hạn hiện tại
 
-- `XK_blocked` dùng block size cố định là 64; chưa có tuỳ chọn CLI để điều chỉnh hoặc tự dò block size.
+- Ứng dụng nhập ma trận và benchmark hiện nhận kích thước chữ nhật; benchmark giữ `--size`/`--sizes` cho ma trận vuông.
+- GEMM AVX2/FMA có cho `float`/`double`; chia khối và OpenMP hiện chỉ tối ưu cho `float`. Số nguyên 32→64 có API riêng scalar; các template số nguyên hiện có kiểm tra tràn và dành cho trường hợp cần kiểm tra.
+- Benchmark tự sinh block-size ứng viên khi tuning; lựa chọn tốt nhất vẫn phụ thuộc CPU và tải hệ thống. `XK_blocked` vuông mặc định tiếp tục dùng block size 64.
 - CLI phát hiện hỗ trợ AVX2/FMA nhưng chưa tự hiển thị tên model CPU/compiler.
 - Fallback cho CPU cũ dùng i-k-j tuần tự hoặc OpenMP; hiệu năng có thể thấp hơn AVX2/FMA.
-- `vector_add_avx2` chưa có bài kiểm tra và benchmark riêng.
-- OpenMP có chi phí điều phối; dùng nhiều luồng có thể chậm hơn với ma trận nhỏ.
+- `vector_add_avx2` có bài kiểm tra `float`/`double` cho kích thước nhỏ, phần dư SIMD và mảng rỗng; benchmark riêng dùng `--algorithm vector-add`.
+- OpenMP tự chuyển sang đường chạy đơn luồng khi số phép nhân-cộng ước tính thấp hơn ngưỡng tương đương `256^3`; ngưỡng này hiện được cố định trong mã.
 - `--runs` là số mẫu đo, không phải số lần gọi hàm trong một mẫu. Số lần gọi nội bộ được tự điều chỉnh để đạt thời lượng mẫu tối thiểu.
 
 ## Gợi ý tái lập kết quả
